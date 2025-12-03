@@ -443,7 +443,7 @@ int url_parse(char *src, int len, int *pcur, URL *out)
             }
 
             if (!is_ipv4) {
-                if (cur < len && (is_reg_name(src[cur]) || is_percent_encoded(src, len, cur))) {
+                if (cur < len && (is_reg_name(src[cur]) || is_percent_encoded(src, len, cur) == 1)) {
 
                     int ret = is_percent_encoded(src, len, cur);
                     ASSERT(ret >= 0);
