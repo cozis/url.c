@@ -357,7 +357,6 @@ int url_parse(char *src, int len, int *pcur, URL *out)
         if (cur < len && (is_userinfo(src[cur]) || src[cur] == ':')) {
 
             int user_off = cur;
-            cur++;
 
             while (cur < len) {
                 if (is_userinfo(src[cur]))
@@ -489,6 +488,13 @@ int url_parse(char *src, int len, int *pcur, URL *out)
                 out->port = out->port * 10 + n;
             }
         }
+    } else {
+        out->username = EMPTY;
+        out->password = EMPTY;
+        out->host_text = EMPTY;
+        out->host_type = URL_HOST_EMPTY;
+        out->port = 0;
+        out->no_port = 1;
     }
 
     // Now we parse the path. This is most difficult
