@@ -62,6 +62,9 @@ URL_STATIC_ASSERT(sizeof(URL_IPv6) == 16, "");
 
 typedef struct {
 
+    URL_b32 no_authority;
+    URL_b32 no_userinfo;
+
     // May be empty
     URL_String scheme;
 
@@ -97,8 +100,14 @@ typedef struct {
 
 } URL;
 
-int url_parse(char *src, int len, int *pcur, bool strict, URL *out);
 int url_parse_ipv4(char *src, int len, int *pcur, URL_IPv4 *out);
 int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out);
+
+int url_parse(char *src, int len, int *pcur, URL_b32 strict, URL *out);
+
+int url_resolve_reference(char *src, int len, int *pcur,
+    URL *base, URL_b32 strict, char *dst, int cap);
+
+int url_remove_white_space(char *src, int len, char *dst, int cap);
 
 #endif // URL_INCLUDED

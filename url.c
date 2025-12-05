@@ -1,3 +1,4 @@
+#include <string.h>
 #include "url.h"
 
 // This is free and unencumbered software released into the public domain.
@@ -44,8 +45,8 @@ static URL_b32 streq(URL_String a, URL_String b)
         return 0;
     for (int i = 0; i < a.len; i++)
         if (a.ptr[i] != b.ptr[i])
-            return false;
-    return true;
+            return 0;
+    return 1;
 }
 
 static URL_b32 is_alpha(char c)
@@ -320,7 +321,7 @@ int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out)
 	return 0;
 }
 
-int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
+static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
 {
     int cur = pcur ? *pcur : 0;
 
@@ -358,11 +359,12 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
     // info or the domain until we hit a @ character or
     // a character not allowed in the user info, se we
     // need to backtrack in a similar way to the scheme
-    URL_b32 authority = 0;
+    out->no_authority = 1;
+    out->no_userinfo = 1;
     int authority_off = cur;
     if (len - cur > 1 && src[cur] == '/' && src[cur+1] == '/') {
         cur += 2; // Consume the //
-        authority = 1;
+        out->no_authority = 0;
 
         out->username = EMPTY;
         out->password = EMPTY;
@@ -404,12 +406,14 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
                 if (cur == len || src[cur] != '@') {
                     cur = user_off; // Not userinfo after all
                 } else {
+                    out->no_userinfo = 0;
                     out->username = SLICE(src, user_off, pass_off-1);
                     out->password = SLICE(src, pass_off, cur);
                     cur++; // Consume the '@'
                 }
 
             } else if (cur < len && src[cur] == '@') {
+                out->no_userinfo = 0;
                 out->username = SLICE(src, user_off, cur);
                 out->password = EMPTY;
                  cur++; // Consume the '@'
@@ -446,7 +450,7 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
             URL_b32 is_ipv4 = 0;
 
             // First, try the IPv4 rule
-            if (is_digit(src[cur])) {
+            if (cur < len && is_digit(src[cur])) {
                 if (url_parse_ipv4(src, len, &cur, &out->host_ipv4) == 0) {
                     out->host_type = URL_HOST_IPV4;
                     is_ipv4 = 1;
@@ -474,10 +478,13 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
                             cur += 3;
                         }
                     }
+                    ASSERT(cur > 0);
 
                     // Registered names are not allowed to end with a dot,
                     // so unconsume the last character if it is one
-                    if (cur > 0 && src[cur] == '.')
+                    //
+                    // TODO: What if the dot is percent-encoded?
+                    if (src[cur-1] == '.')
                         cur--;
 
                 } else {
@@ -512,6 +519,21 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
                 out->port = out->port * 10 + n;
             }
         }
+
+        // The WHATWG standard considers the sequence "//"
+        // part of the path and not the authority if userinfo,
+        // host, and port are missing
+        if (!strict) {
+            if ((streq(out->scheme, S("http")) || streq(out->scheme, S("https")))
+                && out->username.len == 0
+                && out->password.len == 0
+                && out->host_type == URL_HOST_EMPTY
+                && out->no_port) {
+                out->no_authority = 1;
+                cur = authority_off;
+            }
+        }
+
     } else {
         out->username = EMPTY;
         out->password = EMPTY;
@@ -521,27 +543,13 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
         out->no_port = 1;
     }
 
-    // The WHATWG standard considers the sequence "//"
-    // part of the path and not the authority if userinfo,
-    // host, and port are missing
-    if (!strict) {
-        if (authority
-            && out->username.len == 0
-            && out->password.len == 0
-            && out->host_type == URL_HOST_EMPTY
-            && out->no_port) {
-            authority = false;
-            cur = authority_off;
-        }
-    }
-
     // Now we parse the path. This is most difficult
     // component as it changes based on what comes
     // before it.
     //
     // If an URL contains an authority component, it
     // must be absolute or empty.
-    if (authority && (cur == len || src[cur] != '/')) {
+    if (!out->no_authority && (cur == len || src[cur] != '/')) {
         out->path = EMPTY;
     } else {
 
@@ -635,4 +643,261 @@ int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
             return -1;
     }
     return 0;
+}
+
+int url_parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
+{
+    int ret = parse(src, len, pcur, strict, out);
+    if (ret < 0)
+        return ret;
+
+    if (out->scheme.len == 0)
+        return -1;
+    return 0;
+}
+
+#define PATH_COMPONENT_LIMIT 32
+
+typedef struct {
+    int count;
+    URL_String stack[PATH_COMPONENT_LIMIT];
+} PathComps;
+
+static int
+resolve_dots_and_append_comps(PathComps *comps, URL_String src)
+{
+    URL_b32 is_absolute = 0;
+    if (src.len > 0 && src.ptr[0] == '/') {
+        is_absolute = 1;
+        src.ptr++;
+        src.len--;
+        if (src.len == 0)
+            return 0;
+    }
+
+    int i = 0;
+    for (;;) {
+
+        int off = i;
+        while (i < src.len && src.ptr[i] != '/')
+            i++;
+        int len = i - off;
+
+        if (len == 0)
+            return -1; // Empty component
+
+        URL_String comp = { src.ptr + off, len };
+        if (comp.len == 2 && comp.ptr[0] == '.' && comp.ptr[1] == '.') {
+            if (comps->count == 0) {
+                // For absolute paths, ".." at root is ignored (stays at root)
+                // For relative paths, ".." with no components references parent, which is invalid
+                if (!is_absolute)
+                    return -1;
+                // Otherwise, ignore the ".." (absolute path, already at root)
+            } else {
+                comps->count--;
+            }
+        } else if (comp.len != 1 || comp.ptr[0] != '.') {
+            if (comps->count == PATH_COMPONENT_LIMIT)
+                return -1; // To many components
+            comps->stack[comps->count++] = comp;
+        }
+
+        if (i == src.len)
+            break;
+
+        ASSERT(src.ptr[i] == '/');
+        i++;
+
+        if (i == src.len)
+            break;
+    }
+
+    return 0;
+}
+
+typedef struct {
+    char *dst;
+    int   cap;
+    int   len;
+} Builder;
+
+static void append(Builder *b, URL_String s)
+{
+    int unused = b->cap - b->len;
+    if (unused > 0) {
+        int copy = s.len;
+        if (copy > unused)
+            copy = unused;
+        memcpy(b->dst + b->len, s.ptr, copy);
+    }
+    b->len += s.len;
+}
+
+static void append_port(Builder *b, URL_u16 port)
+{
+    char buf[sizeof("65536")-1];
+    URL_u16 magn = 10000;
+    for (int i = 0; i < 5; i++) {
+        buf[i] = '0' + (port / magn);
+        port %= magn;
+        magn /= 10;
+    }
+
+    // Remove leading zeros
+    char *ptr = buf;
+    while (ptr < buf + sizeof(buf)-1 && *ptr == '0')
+        ptr++;
+
+    append(b, (URL_String) { ptr, 5 - (ptr - buf) });
+}
+
+static void append_authority(Builder *b, URL url)
+{
+    if (!url.no_authority) {
+        append(b, S("//"));
+        if (!url.no_userinfo) {
+            append(b, url.username);
+            append(b, S(":"));
+            append(b, url.password);
+            append(b, S("@"));
+        }
+        append(b, url.host_text);
+        if (!url.no_port) {
+            append(b, S(":"));
+            append_port(b, url.port);
+        }
+    }
+}
+
+int url_resolve_reference(char *src, int len, int *pcur,
+    URL *base, URL_b32 strict, char *dst, int cap)
+{
+    if (base != NULL && base->scheme.len == 0)
+        return -1; // Base is not an absolute URL
+
+    URL ref;
+    int ret = parse(src, len, pcur, strict, &ref);
+    if (ret < 0)
+        return ret;
+
+    Builder b = { dst, cap, 0 };
+    if (ref.scheme.len > 0) {
+        append(&b, ref.scheme);
+        append(&b, S(":"));
+        append_authority(&b, ref);
+        append(&b, ref.path);
+        if (ref.query.len > 0) {
+            append(&b, S("?"));
+            append(&b, ref.query);
+        }
+    } else {
+
+        if (base == NULL) {
+            // No base URL provided, which means the
+            // source is required to be an absolute URL
+            return -1;
+        }
+
+        ASSERT(base->scheme.len > 0);
+        append(&b, base->scheme);
+        append(&b, S(":"));
+        if (!ref.no_authority) {
+
+            append_authority(&b, ref);
+
+            PathComps comps = {0};
+            if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                    return -1;
+            for (int i = 0; i < comps.count; i++) {
+                append(&b, S("/"));
+                append(&b, comps.stack[i]);
+            }
+
+            if (ref.query.len > 0) {
+                append(&b, S("?"));
+                append(&b, ref.query);
+            }
+
+        } else {
+
+            append_authority(&b, *base);
+
+            if (ref.path.len == 0) {
+                append(&b, base->path);
+                if (ref.query.len > 0) {
+                    append(&b, S("?"));
+                    append(&b, ref.query);
+                } else if (base->query.len > 0) {
+                    append(&b, S("?"));
+                    append(&b, base->query);
+                }
+            } else {
+                ASSERT(ref.path.len > 0);
+                PathComps comps = {0};
+                if (ref.path.ptr[0] == '/') {
+                    if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                        return -1;
+                } else {
+                    if (!base->no_authority && base->path.len == 0) {
+                        if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                            return -1;
+                    } else {
+                        if (resolve_dots_and_append_comps(&comps, base->path) < 0)
+                                return -1;
+                        if (comps.count > 0) {
+                            comps.count--;
+                        }
+                        if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                            return -1;
+                    }
+                }
+                for (int i = 0; i < comps.count; i++) {
+                    append(&b, S("/"));
+                    append(&b, comps.stack[i]);
+                }
+                if (ref.query.len > 0) {
+                    append(&b, S("?"));
+                    append(&b, ref.query);
+                }
+            }
+        }
+    }
+
+    if (ref.fragment.len > 0) {
+        append(&b, S("#"));
+        append(&b, ref.fragment);
+    }
+
+    return b.len;
+}
+
+static URL_b32 is_white_space(char c)
+{
+    return c == ' '
+        || c == '\n'
+        || c == '\t'
+        || c == '\r';
+}
+
+int url_remove_white_space(char *src, int len, char *dst, int cap)
+{
+    while (len > 0 && is_white_space(src[0])) {
+        src++;
+        len--;
+    }
+
+    while (len > 0 && is_white_space(src[len-1]))
+        len--;
+
+    int copied = 0;
+    for (int i = 0; i < len; i++) {
+        if (!is_white_space(src[i]) || src[i] == ' ') {
+            if (copied < cap)
+                dst[copied] = src[i];
+            copied++;
+        }
+    }
+
+    return copied;
 }

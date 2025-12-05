@@ -310,6 +310,7 @@ static int run_test(cJSON *json)
     }
 
     int ret;
+    char tmp[1<<10];
     char buf[1<<10];
     URL parsed;
     if (cJSON_IsNull(json_base)) {
@@ -334,6 +335,13 @@ static int run_test(cJSON *json)
             return -1;
         }
         assert(ret == 0);
+
+        ret = url_remove_white_space(src.ptr, src.len, tmp, (int) sizeof(tmp));
+        if (ret > (int) sizeof(tmp)) {
+            assert(0); // TODO
+        }
+        src.ptr = tmp;
+        src.len = ret;
 
         ret = url_resolve_reference(src.ptr, src.len, NULL, &parsed_base, false, buf, (int) sizeof(buf));
         if (ret >= (int) sizeof(buf)) {
@@ -440,7 +448,7 @@ static char *load_file(char *path)
 
 int main(void)
 {
-    char *path = "data/urltestdata.json";
+    char *path = "wpt/urltestdata.json";
     char *buf = load_file(path);
     if (buf == NULL) {
         fprintf(stderr, "Error: Couldn't open %s\n", path);
