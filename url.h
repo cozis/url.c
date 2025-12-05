@@ -97,7 +97,7 @@ typedef struct {
 
 } URL;
 
-int url_parse(char *src, int len, int *pcur, URL *out);
+int url_parse(char *src, int len, int *pcur, bool strict, URL *out);
 int url_parse_ipv4(char *src, int len, int *pcur, URL_IPv4 *out);
 int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out);
 

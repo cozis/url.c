@@ -34,8 +34,19 @@
 #define UINT8_MAX  (URL_u8)  ((1 <<  8)-1)
 #define UINT16_MAX (URL_u16) ((1 << 16)-1)
 
+#define S(X) ((URL_String) { (X), sizeof(X)-1 })
 #define EMPTY (URL_String) { (void*) 0, 0 }
 #define SLICE(src, off, end) (URL_String) { src + off, end - off }
+
+static URL_b32 streq(URL_String a, URL_String b)
+{
+    if (a.len != b.len)
+        return 0;
+    for (int i = 0; i < a.len; i++)
+        if (a.ptr[i] != b.ptr[i])
+            return false;
+    return true;
+}
 
 static URL_b32 is_alpha(char c)
 {
@@ -309,7 +320,7 @@ int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out)
 	return 0;
 }
 
-int url_parse(char *src, int len, int *pcur, URL *out)
+int url_parse(char *src, int len, int *pcur, bool strict, URL *out)
 {
     int cur = pcur ? *pcur : 0;
 
@@ -348,6 +359,7 @@ int url_parse(char *src, int len, int *pcur, URL *out)
     // a character not allowed in the user info, se we
     // need to backtrack in a similar way to the scheme
     URL_b32 authority = 0;
+    int authority_off = cur;
     if (len - cur > 1 && src[cur] == '/' && src[cur+1] == '/') {
         cur += 2; // Consume the //
         authority = 1;
@@ -463,6 +475,11 @@ int url_parse(char *src, int len, int *pcur, URL *out)
                         }
                     }
 
+                    // Registered names are not allowed to end with a dot,
+                    // so unconsume the last character if it is one
+                    if (cur > 0 && src[cur] == '.')
+                        cur--;
+
                 } else {
                     out->host_type = URL_HOST_EMPTY;
                 }
@@ -474,6 +491,13 @@ int url_parse(char *src, int len, int *pcur, URL *out)
         out->no_port = 1;
         out->port    = 0;
         if (cur < len && src[cur] == ':') {
+
+            // The WHATWG standard forbids port numbers with the
+            // "file" protocol.
+            if (!strict) {
+                if (streq(out->scheme, S("file")))
+                    return -1;
+            }
 
             cur++; // Consume the ':'
             out->no_port = 0;
@@ -495,6 +519,20 @@ int url_parse(char *src, int len, int *pcur, URL *out)
         out->host_type = URL_HOST_EMPTY;
         out->port = 0;
         out->no_port = 1;
+    }
+
+    // The WHATWG standard considers the sequence "//"
+    // part of the path and not the authority if userinfo,
+    // host, and port are missing
+    if (!strict) {
+        if (authority
+            && out->username.len == 0
+            && out->password.len == 0
+            && out->host_type == URL_HOST_EMPTY
+            && out->no_port) {
+            authority = false;
+            cur = authority_off;
+        }
     }
 
     // Now we parse the path. This is most difficult
@@ -523,6 +561,19 @@ int url_parse(char *src, int len, int *pcur, URL *out)
         }
 
         out->path = SLICE(src, off, cur);
+    }
+
+    // For a subset of protocols, WHATWG sets the default
+    // path to "/"
+    if (!strict) {
+        if (out->path.len == 0 && (
+            streq(out->scheme, S("ftp")) ||
+            streq(out->scheme, S("file")) ||
+            streq(out->scheme, S("http")) ||
+            streq(out->scheme, S("https")) ||
+            streq(out->scheme, S("ws")) ||
+            streq(out->scheme, S("wss"))))
+            out->path = S("/");
     }
 
     // Consume the query
