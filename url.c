@@ -901,3 +901,34 @@ int url_remove_white_space(char *src, int len, char *dst, int cap)
 
     return copied;
 }
+
+int url_decode_field(URL_String field, char *dst, int cap)
+{
+    char *src = field.ptr;
+    int   len = field.len;
+    int   rd  = 0;
+    int   wr  = 0;
+
+    while (rd < len) {
+
+        int ret = is_percent_encoded(src, len, rd);
+        if (ret < 0)
+            return -1;
+
+        char c;
+        if (ret == 1) {
+            int h = hex_digit_to_int(src[rd+1]);
+            int l = hex_digit_to_int(src[rd+2]);
+            c = (char) ((h << 4) | l);
+            rd += 3;
+        } else {
+            c = src[rd];
+            rd++;
+        }
+
+        if (wr < cap)
+            dst[wr] = c;
+        wr++;
+    }
+    return wr;
+}

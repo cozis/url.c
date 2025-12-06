@@ -110,4 +110,6 @@ int url_resolve_reference(char *src, int len, int *pcur,
 
 int url_remove_white_space(char *src, int len, char *dst, int cap);
 
+int url_decode_field(URL_String field, char *dst, int cap);
+
 #endif // URL_INCLUDED
