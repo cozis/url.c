@@ -1,4 +1,3 @@
-#include <string.h>
 #include "url.h"
 
 // This is free and unencumbered software released into the public domain.
@@ -35,9 +34,20 @@
 #define UINT8_MAX  (URL_u8)  ((1 <<  8)-1)
 #define UINT16_MAX (URL_u16) ((1 << 16)-1)
 
+#define NULL ((void*) 0)
 #define S(X) ((URL_String) { (X), sizeof(X)-1 })
-#define EMPTY (URL_String) { (void*) 0, 0 }
+#define EMPTY (URL_String) { NULL, 0 }
 #define SLICE(src, off, end) (URL_String) { src + off, end - off }
+
+#if defined(__GNUC__) || defined(__clang__)
+#define memcpy_ __builtin_memcpy
+#else
+static void memcpy_(char *dst, char *src, int len)
+{
+    for (int i = 0; i < len; i++)
+        dst[i] = src[i];
+}
+#endif
 
 static URL_b32 streq(URL_String a, URL_String b)
 {
@@ -734,7 +744,7 @@ static void append(Builder *b, URL_String s)
         int copy = s.len;
         if (copy > unused)
             copy = unused;
-        memcpy(b->dst + b->len, s.ptr, copy);
+        memcpy_(b->dst + b->len, s.ptr, copy);
     }
     b->len += s.len;
 }
@@ -806,7 +816,7 @@ int url_serialize(URL *url, URL *base, char *dst, int cap)
     Builder b = { dst, cap, 0 };
     if (url->scheme.len > 0) {
         append_scheme(&b, url->scheme);
-        append_authority(&b, url);
+        append_authority(&b, *url);
         append(&b, url->path);
         append_query(&b, url->query);
     } else {
@@ -818,7 +828,7 @@ int url_serialize(URL *url, URL *base, char *dst, int cap)
         ASSERT(base->scheme.len > 0);
         append_scheme(&b, base->scheme);
         if (!url->no_authority) {
-            append_authority(&b, url);
+            append_authority(&b, *url);
             PathComps comps = {0};
             if (resolve_dots_and_append_comps(&comps, url->path) < 0)
                     return -1;

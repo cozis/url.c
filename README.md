@@ -7,3 +7,4 @@ It features
 * The ability to switch between RFC 3986 and WHATWG with a flag
 * Relative reference parsing and resolution
 * URL normalization
+* Doesn't rely on null-terminated strings

@@ -3,11 +3,11 @@
 ifeq ($(shell uname -s),Windows_NT)
 	EXT = .exe
 else
-	EXT =
+	EXT = .out
 endif
 
 all:
 	gcc -o test$(EXT) test.c ../url.c cJSON.c -Wall -Wextra -ggdb
 
 clean:
-	rm test test.exe
+	rm test.out test.exe

@@ -25,22 +25,18 @@
 //
 // For more information, please refer to <https://unlicense.org>
 
-#define URL_STATIC_ASSERT _Static_assert
-
 typedef unsigned char  URL_u8;
 typedef unsigned short URL_u16;
 typedef unsigned int   URL_u32;
 typedef unsigned int   URL_b32;
 
-URL_STATIC_ASSERT(sizeof(URL_u8)  == 1, "");
-URL_STATIC_ASSERT(sizeof(URL_u16) == 2, "");
-URL_STATIC_ASSERT(sizeof(URL_u32) == 4, "");
-URL_STATIC_ASSERT(sizeof(URL_b32) == 4, "");
-
 typedef struct {
     char *ptr;
     int   len;
 } URL_String;
+
+typedef struct { URL_u32 data;    } URL_IPv4;
+typedef struct { URL_u16 data[8]; } URL_IPv6;
 
 typedef enum {
     URL_HOST_EMPTY,
@@ -48,17 +44,6 @@ typedef enum {
     URL_HOST_IPV6,
     URL_HOST_NAME,
 } URL_HostType;
-
-typedef struct {
-    URL_u32 data;
-} URL_IPv4;
-
-typedef struct {
-    URL_u16 data[8];
-} URL_IPv6;
-
-URL_STATIC_ASSERT(sizeof(URL_IPv4) == 4, "");
-URL_STATIC_ASSERT(sizeof(URL_IPv6) == 16, "");
 
 typedef struct {
 
@@ -79,6 +64,7 @@ typedef struct {
     URL_String scheme;
 
     // Both may be empty
+    // May be percent-encoded
     URL_String username;
     URL_String password;
 
@@ -88,6 +74,7 @@ typedef struct {
     // (host byte order).
     // Note that the host may be empty, in which
     // case host_type=URL_HOST_EMPTY.
+    // If host_text is set, it may be percent-encoded.
     URL_HostType host_type;
     URL_String   host_text;
     union {
@@ -100,12 +87,15 @@ typedef struct {
     URL_b32 no_port;
     URL_u16 port;
 
+    // May be percent-encoded
     URL_String path;
 
     // May be empty
+    // May be percent-encoded
     URL_String query;
 
     // May be empty
+    // May be percent-encoded
     URL_String fragment;
 
 } URL;
