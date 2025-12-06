@@ -211,7 +211,12 @@ int url_parse_ipv4(char *src, int len, int *pcur, URL_IPv4 *out)
         out->data |= byte;
     }
 
-    if (pcur) *pcur = cur;
+    if (pcur) {
+        *pcur = cur;
+    } else {
+        if (cur != len)
+            return -1;
+    }
     return 0;
 }
 
@@ -318,10 +323,16 @@ int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out)
 	for (int i = 0; i < tail_len; i++)
 		out->data[8 - tail_len + i] = tail[i];
 
-	return 0;
+	if (pcur) {
+        *pcur = cur;
+    } else {
+        if (cur != len)
+            return -1;
+    }
+    return 0;
 }
 
-static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
+int url_parse(char *src, int len, int *pcur, URL *out, int flags)
 {
     int cur = pcur ? *pcur : 0;
 
@@ -348,6 +359,11 @@ static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
             cur++; // Consume the ':'
         }
     }
+
+    // If the user doesn't allow references and we didn't
+    // find a scheme, we fail.
+    if ((flags & URL_FLAG_ALLOWREF) == 0 && out->scheme.len == 0)
+        return -1;
 
     // If the following characters are // we expect an
     // authority. An authority consists of some optional
@@ -501,7 +517,7 @@ static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
 
             // The WHATWG standard forbids port numbers with the
             // "file" protocol.
-            if (!strict) {
+            if ((flags & URL_FLAG_RFC3986) == 0) {
                 if (streq(out->scheme, S("file")))
                     return -1;
             }
@@ -523,7 +539,7 @@ static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
         // The WHATWG standard considers the sequence "//"
         // part of the path and not the authority if userinfo,
         // host, and port are missing
-        if (!strict) {
+        if ((flags & URL_FLAG_RFC3986) == 0) {
             if ((streq(out->scheme, S("http")) || streq(out->scheme, S("https")))
                 && out->username.len == 0
                 && out->password.len == 0
@@ -573,7 +589,7 @@ static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
 
     // For a subset of protocols, WHATWG sets the default
     // path to "/"
-    if (!strict) {
+    if ((flags & URL_FLAG_RFC3986) == 0) {
         if (out->path.len == 0 && (
             streq(out->scheme, S("ftp")) ||
             streq(out->scheme, S("file")) ||
@@ -642,17 +658,6 @@ static int parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
         if (cur != len)
             return -1;
     }
-    return 0;
-}
-
-int url_parse(char *src, int len, int *pcur, URL_b32 strict, URL *out)
-{
-    int ret = parse(src, len, pcur, strict, out);
-    if (ret < 0)
-        return ret;
-
-    if (out->scheme.len == 0)
-        return -1;
     return 0;
 }
 
@@ -770,77 +775,76 @@ static void append_authority(Builder *b, URL url)
     }
 }
 
-int url_resolve_reference(char *src, int len, int *pcur,
-    URL *base, URL_b32 strict, char *dst, int cap)
+static void append_scheme(Builder *b, URL_String scheme)
+{
+    ASSERT(scheme.len > 0);
+    append(b, scheme); // TODO: normalize
+    append(b, S(":"));
+}
+
+static void append_query(Builder *b, URL_String query)
+{
+    if (query.len > 0) {
+        append(b, S("?"));
+        append(b, query);
+    }
+}
+
+static void append_fragment(Builder *b, URL_String fragment)
+{
+    if (fragment.len > 0) {
+        append(b, S("#"));
+        append(b, fragment);
+    }
+}
+
+int url_serialize(URL *url, URL *base, char *dst, int cap)
 {
     if (base != NULL && base->scheme.len == 0)
         return -1; // Base is not an absolute URL
 
-    URL ref;
-    int ret = parse(src, len, pcur, strict, &ref);
-    if (ret < 0)
-        return ret;
-
     Builder b = { dst, cap, 0 };
-    if (ref.scheme.len > 0) {
-        append(&b, ref.scheme);
-        append(&b, S(":"));
-        append_authority(&b, ref);
-        append(&b, ref.path);
-        if (ref.query.len > 0) {
-            append(&b, S("?"));
-            append(&b, ref.query);
-        }
+    if (url->scheme.len > 0) {
+        append_scheme(&b, url->scheme);
+        append_authority(&b, url);
+        append(&b, url->path);
+        append_query(&b, url->query);
     } else {
-
         if (base == NULL) {
             // No base URL provided, which means the
             // source is required to be an absolute URL
             return -1;
         }
-
         ASSERT(base->scheme.len > 0);
-        append(&b, base->scheme);
-        append(&b, S(":"));
-        if (!ref.no_authority) {
-
-            append_authority(&b, ref);
-
+        append_scheme(&b, base->scheme);
+        if (!url->no_authority) {
+            append_authority(&b, url);
             PathComps comps = {0};
-            if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+            if (resolve_dots_and_append_comps(&comps, url->path) < 0)
                     return -1;
             for (int i = 0; i < comps.count; i++) {
                 append(&b, S("/"));
                 append(&b, comps.stack[i]);
             }
-
-            if (ref.query.len > 0) {
-                append(&b, S("?"));
-                append(&b, ref.query);
-            }
-
+            append_query(&b, url->query);
         } else {
-
             append_authority(&b, *base);
-
-            if (ref.path.len == 0) {
+            if (url->path.len == 0) {
                 append(&b, base->path);
-                if (ref.query.len > 0) {
-                    append(&b, S("?"));
-                    append(&b, ref.query);
-                } else if (base->query.len > 0) {
-                    append(&b, S("?"));
-                    append(&b, base->query);
+                if (url->query.len > 0) {
+                    append_query(&b, url->query);
+                } else {
+                    append_query(&b, base->query);
                 }
             } else {
-                ASSERT(ref.path.len > 0);
+                ASSERT(url->path.len > 0);
                 PathComps comps = {0};
-                if (ref.path.ptr[0] == '/') {
-                    if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                if (url->path.ptr[0] == '/') {
+                    if (resolve_dots_and_append_comps(&comps, url->path) < 0)
                         return -1;
                 } else {
                     if (!base->no_authority && base->path.len == 0) {
-                        if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                        if (resolve_dots_and_append_comps(&comps, url->path) < 0)
                             return -1;
                     } else {
                         if (resolve_dots_and_append_comps(&comps, base->path) < 0)
@@ -848,7 +852,7 @@ int url_resolve_reference(char *src, int len, int *pcur,
                         if (comps.count > 0) {
                             comps.count--;
                         }
-                        if (resolve_dots_and_append_comps(&comps, ref.path) < 0)
+                        if (resolve_dots_and_append_comps(&comps, url->path) < 0)
                             return -1;
                     }
                 }
@@ -856,18 +860,11 @@ int url_resolve_reference(char *src, int len, int *pcur,
                     append(&b, S("/"));
                     append(&b, comps.stack[i]);
                 }
-                if (ref.query.len > 0) {
-                    append(&b, S("?"));
-                    append(&b, ref.query);
-                }
+                append_query(&b, url->query);
             }
         }
     }
-
-    if (ref.fragment.len > 0) {
-        append(&b, S("#"));
-        append(&b, ref.fragment);
-    }
+    append_fragment(&b, url->fragment);
 
     return b.len;
 }
@@ -902,10 +899,10 @@ int url_remove_white_space(char *src, int len, char *dst, int cap)
     return copied;
 }
 
-int url_decode_field(URL_String field, char *dst, int cap)
+int url_percent_decode(URL_String str, char *dst, int cap)
 {
-    char *src = field.ptr;
-    int   len = field.len;
+    char *src = str.ptr;
+    int   len = str.len;
     int   rd  = 0;
     int   wr  = 0;
 

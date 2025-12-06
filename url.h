@@ -62,10 +62,20 @@ URL_STATIC_ASSERT(sizeof(URL_IPv6) == 16, "");
 
 typedef struct {
 
+    // These flags are used to differentiate between
+    // an empty userinfo/authority and an undefined one.
+    // For instance:
+    //     http:index.html      URL with no authority
+    //     http:///index.html   URL with an empty authority
+    //     http://example.com   URL with no userinfo
+    //     http://:@example.com URL with an empty userinfo
+    // We keep track of this in case we want to encode
+    // back the parsed URL.
     URL_b32 no_authority;
     URL_b32 no_userinfo;
 
-    // May be empty
+    // Can only be empty when URL_FLAG_ALLOWREF is passed
+    // to url_parse.
     URL_String scheme;
 
     // Both may be empty
@@ -100,16 +110,75 @@ typedef struct {
 
 } URL;
 
+// Parse an IPv4 in dotted-decimal notation (127.0.0.1)
+// If pcur is not NULL, parsing starts at offset *pcur
+// and the final cursor state is written back into pcur.
+// If pcur is NULL, the string is assumed to only contain
+// the IPv4 address, so the function fails if the string
+// contains anything else after it.
 int url_parse_ipv4(char *src, int len, int *pcur, URL_IPv4 *out);
+
+// Like url_parse_ipv4, but for IPv6 addresses.
 int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out);
 
-int url_parse(char *src, int len, int *pcur, URL_b32 strict, URL *out);
+enum {
+    URL_FLAG_ALLOWREF = 1<<0,
+    URL_FLAG_RFC3986  = 1<<1,
+};
 
-int url_resolve_reference(char *src, int len, int *pcur,
-    URL *base, URL_b32 strict, char *dst, int cap);
+// Parses the URL contained in the string "src" of length "len"
+// into the structure "out". The output structure will hold
+// references to the input buffer. Any percent-encoded components
+// are validated but not converted. The percent-decoded version
+// of a component can be obtained by calling url_percent_decode.
+//
+// If "pcur" is not null, the parsing will start at offset *pcur
+// and the final position of the cursor will be stored back in
+// pcur. If pcur is NULL, the string is expected to only contain
+// the URL, so the function fails if the string contains something
+// other than the URL.
+//
+// If "flags" is zero, the function will parse URLs according
+// to the WHATWG specification (which is what browsers actually
+// do). Strictly speaking, to adhere to WHATWG the parser needs
+// to strip whitespace from the URL before processing it, which
+// this function doesn't do. If you want this behavior, you must
+// preprocess the input with url_remove_white_space.
+//
+// If the flag URL_FLAG_RFC3986 is passed, the parser will strictly
+// adhere to RFC 3986.
+//
+// If the flag URL_FLAG_ALLOWREF is passed, then relative
+// references may also be parsed. These include things like
+// "../index.html", which are not URLs but may be evaluated as
+// such in relation to one. Relative references may be resolved
+// using url_serialize.
+int url_parse(char *src, int len, int *pcur, URL *out, int flags);
 
+// Remove whitespace from the string "src" of length "len"
+// according to the WHATWG specification. Using this function
+// alongside url_parse has the same behavior to what browsers
+// do.
+// The result string is written to the buffer "dst" of capacity
+// "cap". If the buffer isn't large enough, the number of bytes
+// that would have been written is returned.
 int url_remove_white_space(char *src, int len, char *dst, int cap);
 
-int url_decode_field(URL_String field, char *dst, int cap);
+// Percent-decodes the string "str" into the buffer "dst" of
+// capacity "cap". If the buffer's capacity wasn't enough, the
+// number of bytes that would have been written is returned.
+// If the string wasn't percent-encoded (% characters not followed
+// by valid hex digits), -1 is returned.
+int url_percent_decode(URL_String str, char *dst, int cap);
+
+// Serializes "url" into the buffer "dst" of capacity "cap".
+// If the capacity wasn't enough, the number of bytes that
+// would have been written is returned.
+// If "url" is a relative reference, then it is resolved
+// against the absolute URL "base", which can otherwite be
+// set to NULL.
+// Note that this can be used to normalize an URL, even
+// though it's just a best-effor normalization for now.
+int url_serialize(URL *url, URL *base, char *dst, int cap);
 
 #endif // URL_INCLUDED
