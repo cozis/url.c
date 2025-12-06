@@ -524,9 +524,20 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
             // First, try the IPv4 rule
             if (cur < len && is_digit(src[cur])) {
                 if (url_parse_ipv4(src, len, &cur, &out->host_ipv4) == 0) {
-                    out->host_type = URL_HOST_IPV4;
-                    is_ipv4 = 1;
+                    // If we managed to parse an IPv4 address but the
+                    // following character si a valid character for a
+                    // registered name, then it wasn't an IPv4 after
+                    // all. For instance this should not be parsed as
+                    // an IPv4:
+                    //     127.0.0.1.com
+                    if (cur == len || !is_reg_name(src[cur])) {
+                        out->host_type = URL_HOST_IPV4;
+                        is_ipv4 = 1;
+                    }
                 }
+
+                if (!is_ipv4)
+                    cur = host_off;
             }
 
             if (!is_ipv4) {
