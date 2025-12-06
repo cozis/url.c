@@ -35,7 +35,7 @@
 #define UINT16_MAX (URL_u16) ((1 << 16)-1)
 
 #define NULL ((void*) 0)
-#define S(X) ((URL_String) { (X), sizeof(X)-1 })
+#define S(X) (URL_String) { (X), sizeof(X)-1 }
 #define EMPTY (URL_String) { NULL, 0 }
 #define SLICE(src, off, end) (URL_String) { src + off, end - off }
 
@@ -48,6 +48,14 @@ static void memcpy_(char *dst, char *src, int len)
         dst[i] = src[i];
 }
 #endif
+
+static int strlen_(char *s)
+{
+    int n = 0;
+    while (s[n] != '\0')
+        n++;
+    return n;
+}
 
 static URL_b32 streq(URL_String a, URL_String b)
 {
@@ -784,6 +792,13 @@ static void append(Builder *b, URL_String s)
     b->len += s.len;
 }
 
+static void appendc(Builder *b, char c)
+{
+    if (b->len < b->cap)
+        b->dst[b->len] = c;
+    b->len++;
+}
+
 static void append_port(Builder *b, URL_u16 port)
 {
     char buf[sizeof("65536")-1];
@@ -997,4 +1012,163 @@ int url_percent_decode(URL_String str, char *dst, int cap)
         wr++;
     }
     return wr;
+}
+
+static void append_percent_encoded(Builder *b, URL_String str, URL_b32 (*testfn)(char c))
+{
+    for (int i = 0; i < str.len; i++) {
+        char c = str.ptr[i];
+        if (testfn(c))
+            appendc(b, str.ptr[i]);
+        else {
+            static const char table[] = "0123456789abcdef";
+            appendc(b, '%');
+            appendc(b, table[(URL_u8) c >> 4]);
+            appendc(b, table[(URL_u8) c & 0xF]);
+        }
+    }
+}
+
+void url_builder_init(URL_Builder *ub)
+{
+    ub->scheme    = EMPTY;
+    ub->username  = EMPTY;
+    ub->password  = EMPTY;
+    ub->host_type = URL_HOST_EMPTY;
+    ub->no_port   = 1;
+    ub->port      = 0;
+    ub->path      = EMPTY;
+    ub->query     = EMPTY;
+    ub->fragment  = EMPTY;
+}
+
+void url_builder_set_scheme(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->scheme = (URL_String) { str, len };
+}
+
+void url_builder_set_username(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->username = (URL_String) { str, len };
+}
+
+void url_builder_set_password(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->password = (URL_String) { str, len };
+}
+
+void url_builder_set_host_name(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->host_type = URL_HOST_NAME;
+    ub->host_name = (URL_String) { str, len };
+}
+
+void url_builder_set_host_ipv4(URL_Builder *ub, URL_IPv4 ipv4)
+{
+    ub->host_type = URL_HOST_IPV4;
+    ub->host_ipv4 = ipv4;
+}
+
+void url_builder_set_host_ipv6(URL_Builder *ub, URL_IPv6 ipv6)
+{
+    ub->host_type = URL_HOST_IPV6;
+    ub->host_ipv6 = ipv6;
+}
+
+void url_builder_set_port(URL_Builder *ub, URL_u16 port)
+{
+    ub->no_port = 0;
+    ub->port = port;
+}
+
+void url_builder_set_path(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->path = (URL_String) { str, len };
+}
+
+void url_builder_set_query(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->query = (URL_String) { str, len };
+}
+
+void url_builder_set_fragment(URL_Builder *ub, char *str, int len)
+{
+    if (len < 0) len = str ? strlen_(str) : 0;
+    ub->fragment = (URL_String) { str, len };
+}
+
+int url_builder_finalize(URL_Builder *ub, char *dst, int cap)
+{
+    Builder b = { dst, cap, 0 };
+
+    // Validate and append the schema
+    {
+        if (ub->scheme.len == 0 || !is_scheme_first(ub->scheme.ptr[0]))
+            return -1;
+        for (int i = 1; i < ub->scheme.len; i++)
+            if (!is_scheme(ub->scheme.ptr[i]))
+                return -1;
+        append(&b, ub->scheme);
+    }
+
+    URL_b32 authority = 0;
+    if (ub->username.len > 0 || ub->password.len > 0 || ub->host_type != URL_HOST_EMPTY || ub->no_port == 0) {
+        authority = 1;
+        appendc(&b, '/');
+        appendc(&b, '/');
+        if (ub->username.len > 0 || ub->password.len > 0) {
+            append_percent_encoded(&b, ub->username, is_userinfo);
+            appendc(&b, ':');
+            append_percent_encoded(&b, ub->password, is_userinfo);
+            appendc(&b, '@');
+        }
+        switch (ub->host_type) {
+        case URL_HOST_EMPTY:
+            // Do nothing
+            break;
+        case URL_HOST_NAME:
+            append_percent_encoded(&b, ub->host_name, is_reg_name);
+            break;
+        case URL_HOST_IPV4:
+            ASSERT(0); // TODO
+            break;
+        case URL_HOST_IPV6:
+            appendc(&b, '[');
+            ASSERT(0);
+            appendc(&b, ']');
+            break;
+        }
+        if (ub->no_port == 0) {
+            appendc(&b, ':');
+            append_port(&b, ub->port);
+        }
+    }
+
+    if (ub->path.len > 0) {
+
+        // If an authority is present, the path can't be relative
+        if (authority && ub->path.ptr[0] != '/')
+            return -1;
+
+        PathComps comps = {0};
+        if (resolve_dots_and_append_comps(&comps, ub->path) < 0)
+                return -1;
+        for (int i = 0; i < comps.count; i++) {
+            if (i > 0 || comps.first_slash)
+                append(&b, S("/"));
+            append_percent_encoded(&b, comps.stack[i], is_pchar);
+        }
+        if (comps.trailing_slash)
+            append(&b, S("/"));
+    }
+
+    append_query(&b, ub->query);
+    append_fragment(&b, ub->fragment);
+    return b.len;
 }

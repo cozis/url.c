@@ -45,6 +45,7 @@ typedef enum {
     URL_HOST_NAME,
 } URL_HostType;
 
+// This struct's fields are strictly read-only.
 typedef struct {
 
     // Flags used to parse this URL
@@ -173,5 +174,40 @@ int url_percent_decode(URL_String str, char *dst, int cap);
 // Note that this can be used to normalize an URL, even
 // though it's just a best-effor normalization for now.
 int url_serialize(URL url, URL *base, char *dst, int cap);
+
+typedef struct {
+
+    URL_String scheme;
+
+    URL_String username;
+    URL_String password;
+
+    URL_HostType host_type;
+    union {
+        URL_String host_name;
+        URL_IPv4   host_ipv4;
+        URL_IPv6   host_ipv6;
+    };
+
+    URL_b32    no_port;
+    URL_u16    port;
+
+    URL_String path;
+    URL_String query;
+    URL_String fragment;
+} URL_Builder;
+
+void url_builder_init(URL_Builder *ub);
+void url_builder_set_scheme(URL_Builder *ub, char *str, int len);
+void url_builder_set_username(URL_Builder *ub, char *str, int len);
+void url_builder_set_password(URL_Builder *ub, char *str, int len);
+void url_builder_set_host_name(URL_Builder *ub, char *str, int len);
+void url_builder_set_host_ipv4(URL_Builder *ub, URL_IPv4 ipv4);
+void url_builder_set_host_ipv6(URL_Builder *ub, URL_IPv6 ipv6);
+void url_builder_set_port(URL_Builder *ub, URL_u16 port);
+void url_builder_set_path(URL_Builder *ub, char *str, int len);
+void url_builder_set_query(URL_Builder *ub, char *str, int len);
+void url_builder_set_fragment(URL_Builder *ub, char *str, int len);
+int  url_builder_finalize(URL_Builder *ub, char *dst, int cap);
 
 #endif // URL_INCLUDED
