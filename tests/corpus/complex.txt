@@ -1,0 +1,1 @@
+https://user:pass@example.com:8080/path?query=value#fragment

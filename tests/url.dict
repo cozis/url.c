@@ -1,0 +1,84 @@
+# AFL++ dictionary for URL fuzzing
+# This helps AFL++ generate more interesting mutations
+
+# URL schemes
+"http://"
+"https://"
+"ftp://"
+"file://"
+"mailto:"
+"data:"
+"ws://"
+"wss://"
+
+# Special characters
+":"
+"/"
+"?"
+"#"
+"@"
+"."
+"%"
+"["
+"]"
+
+# Authority separators
+"//"
+"@"
+
+# Port separators
+":80"
+":443"
+":8080"
+":3000"
+
+# Percent encoding
+"%20"
+"%2F"
+"%3A"
+"%00"
+"%FF"
+
+# IPv4 patterns
+"127.0.0.1"
+"192.168.1.1"
+"0.0.0.0"
+"255.255.255.255"
+
+# IPv6 patterns
+"::1"
+"::"
+"2001:db8::1"
+"::ffff:192.0.2.1"
+
+# Common paths
+"/index.html"
+"/api/v1"
+"/../"
+"/.."
+"/."
+
+# Common query strings
+"?query=value"
+"&"
+"="
+
+# Common fragments
+"#fragment"
+"#top"
+
+# Userinfo
+"user:password@"
+"user@"
+":password@"
+
+# Special values
+"localhost"
+"example.com"
+"example.org"
+
+# Whitespace
+"\t"
+"\n"
+"\r"
+" "
