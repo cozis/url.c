@@ -217,73 +217,89 @@ static bool streq(URL_String a, URL_String b)
     return !memcmp(a.ptr, b.ptr, a.len);
 }
 
-static int compare_urls(URL url_1, URL url_2, char *label_1, char *label_2)
+static int compare_urls(URL parsed, URL expected)
 {
     #define UNPACK(s) (s).len, (s).ptr
 
     bool ok = true;
 
-    if (!streq(url_1.scheme, url_2.scheme)) {
+    if (!streq(parsed.scheme, expected.scheme)) {
         if (ok) test_printf("\n");
         test_printf("  scheme mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.scheme));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.scheme));
+        test_printf("    parsed   [%.*s]\n", UNPACK(parsed.scheme));
+        test_printf("    expected [%.*s]\n", UNPACK(expected.scheme));
         ok = false;
     }
 
-    if (!streq(url_1.username, url_2.username)) {
+    char tmp[1<<9];
+    int ret = url_percent_decode(parsed.username, tmp, sizeof(tmp));
+    assert(ret > -1 && ret < (int) sizeof(tmp));
+
+    if (!streq((URL_String) { tmp, ret }, expected.username)) {
         if (ok) test_printf("\n");
         test_printf("  username mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.username));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.username));
+        test_printf("    parsed   [%.*s]\n", ret, tmp);
+        test_printf("    expected [%.*s]\n", UNPACK(expected.username));
         ok = false;
     }
 
-    if (!streq(url_1.password, url_2.password)) {
+    ret = url_percent_decode(parsed.password, tmp, sizeof(tmp));
+    assert(ret > -1 && ret < (int) sizeof(tmp));
+
+    if (!streq((URL_String) { tmp, ret }, expected.password)) {
         if (ok) test_printf("\n");
         test_printf("  password mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.password));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.password));
+        test_printf("    parsed   [%.*s]\n", ret, tmp);
+        test_printf("    expected [%.*s]\n", UNPACK(expected.password));
         ok = false;
     }
 
-    if (!streq(url_1.host_text, url_2.host_text)) {
+    ret = url_percent_decode(parsed.host_text, tmp, sizeof(tmp));
+    assert(ret > -1 && ret < (int) sizeof(tmp));
+
+    if (!streq((URL_String) { tmp, ret }, expected.host_text)) {
         if (ok) test_printf("\n");
         test_printf("  host mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.host_text));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.host_text));
+        test_printf("    parsed   [%.*s]\n", ret, tmp);
+        test_printf("    expected [%.*s]\n", UNPACK(expected.host_text));
         ok = false;
     }
 
-    if (url_1.port != url_2.port) {
+    if (parsed.port != expected.port) {
         if (ok) test_printf("\n");
         test_printf("  port mismatch\n");
-        test_printf("    %s [%d]\n", label_1, url_1.port);
-        test_printf("    %s [%d]\n", label_2, url_2.port);
+        test_printf("    parsed   [%d]\n", parsed.port);
+        test_printf("    expected [%d]\n", expected.port);
         ok = false;
     }
 
-    if (!streq(url_1.path, url_2.path)) {
+    if (!streq(parsed.path, expected.path)) {
         if (ok) test_printf("\n");
         test_printf("  path mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.path));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.path));
+        test_printf("    parsed   [%.*s]\n", UNPACK(parsed.path));
+        test_printf("    expected [%.*s]\n", UNPACK(expected.path));
         ok = false;
     }
 
-    if (!streq(url_1.query, url_2.query)) {
+    ret = url_percent_decode(parsed.query, tmp, sizeof(tmp));
+    assert(ret > -1 && ret < (int) sizeof(tmp));
+
+    if (!streq((URL_String) { tmp, ret }, expected.query)) {
         if (ok) test_printf("\n");
         test_printf("  query mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.query));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.query));
+        test_printf("    parsed   [%.*s]\n", ret, tmp);
+        test_printf("    expected [%.*s]\n", UNPACK(expected.query));
         ok = false;
     }
 
-    if (!streq(url_1.fragment, url_2.fragment)) {
+    ret = url_percent_decode(parsed.fragment, tmp, sizeof(tmp));
+    assert(ret > -1 && ret < (int) sizeof(tmp));
+
+    if (!streq((URL_String) { tmp, ret }, expected.fragment)) {
         if (ok) test_printf("\n");
         test_printf("  fragment mismatch\n");
-        test_printf("    %s [%.*s]\n", label_1, UNPACK(url_1.fragment));
-        test_printf("    %s [%.*s]\n", label_2, UNPACK(url_2.fragment));
+        test_printf("    parsed   [%.*s]\n", ret, tmp);
+        test_printf("    expected [%.*s]\n", UNPACK(expected.fragment));
         ok = false;
     }
 
@@ -394,7 +410,7 @@ static int run_test(cJSON *json)
         if (json_to_url(json, &expected) < 0)
             return -1;
 
-        if (!compare_urls(parsed, expected, "parsed", "expected")) {
+        if (!compare_urls(parsed, expected)) {
             test_printf("  input: ");
             test_print_str(src);
             test_printf("\n");
