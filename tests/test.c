@@ -314,7 +314,7 @@ static int run_test(cJSON *json)
     char buf[1<<10];
     URL parsed;
     if (cJSON_IsNull(json_base)) {
-        ret = url_parse(src.ptr, src.len, NULL, false, &parsed);
+        ret = url_parse(src.ptr, src.len, NULL, &parsed, 0);
     } else {
         if (!cJSON_IsString(json_base)) {
             test_printf("  JSON object field \"base\" is not a string or null:\n");
@@ -325,7 +325,7 @@ static int run_test(cJSON *json)
         URL_String base = { json_base->valuestring, strlen(json_base->valuestring) };
 
         URL parsed_base;
-        ret = url_parse(base.ptr, base.len, NULL, false, &parsed_base);
+        ret = url_parse(base.ptr, base.len, NULL, &parsed_base, 0);
         if (ret < 0) {
             test_printf("\n");
             test_printf("  JSON object has an invalid \"base\" field:\n");
@@ -343,21 +343,14 @@ static int run_test(cJSON *json)
         src.ptr = tmp;
         src.len = ret;
 
-        ret = url_resolve_reference(src.ptr, src.len, NULL, &parsed_base, false, buf, (int) sizeof(buf));
-        if (ret >= (int) sizeof(buf)) {
-            test_printf("\n");
-            test_printf("  Resolve relative reference is too long for the static buffer\n");
-            test_printf("    base: ");
-            test_print_str(base);
-            test_printf("\n");
-            test_printf("    input: ");
-            test_print_str(src);
-            test_printf("\n");
-            return -1;
-        }
+        URL reference;
+        ret = url_parse(src.ptr, src.len, NULL, &reference, URL_FLAG_ALLOWREF);
 
         if (ret > -1)
-            ret = url_parse(buf, ret, NULL, false, &parsed);
+            ret = url_serialize(&reference, &parsed_base, buf, (int) sizeof(buf));
+
+        if (ret > -1)
+            ret = url_parse(buf, ret, NULL, &parsed, 0);
     }
 
     // Failing test cases have a "failure: true" field
