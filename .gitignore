@@ -4,3 +4,5 @@ reference.out
 reference.exe
 parse.out
 parse.exe
+decode_field.out
+decode_field.exe
