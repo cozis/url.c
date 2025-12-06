@@ -18,7 +18,7 @@ int main(void)
     }
 
     char buf[1<<9];
-    ret = url_serialize(&parsed_url, NULL, buf, sizeof(buf));
+    ret = url_serialize(parsed_url, NULL, buf, sizeof(buf));
 
     // On error, url_serialize returns -1. Errors can
     // only occur when relative references are involved,

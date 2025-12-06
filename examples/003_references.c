@@ -36,7 +36,7 @@ int main(void)
     // Now we can resolve the reference by serializing it with
     // the base URL
     char buf[1<<9];
-    ret = url_serialize(&parsed_relative_reference, &parsed_base_url, buf, sizeof(buf));
+    ret = url_serialize(parsed_relative_reference, &parsed_base_url, buf, sizeof(buf));
 
     // Since url_serialize was called with a non-NULL base URL
     // argument, it may fail. We need to check for a negative

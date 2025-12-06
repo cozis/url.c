@@ -47,6 +47,9 @@ typedef enum {
 
 typedef struct {
 
+    // Flags used to parse this URL
+    int flags;
+
     // These flags are used to differentiate between
     // an empty userinfo/authority and an undefined one.
     // For instance:
@@ -169,6 +172,6 @@ int url_percent_decode(URL_String str, char *dst, int cap);
 // set to NULL.
 // Note that this can be used to normalize an URL, even
 // though it's just a best-effor normalization for now.
-int url_serialize(URL *url, URL *base, char *dst, int cap);
+int url_serialize(URL url, URL *base, char *dst, int cap);
 
 #endif // URL_INCLUDED

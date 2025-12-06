@@ -59,6 +59,23 @@ static URL_b32 streq(URL_String a, URL_String b)
     return 1;
 }
 
+static char to_lower(char c)
+{
+    if (c >= 'A' && c <= 'Z')
+        return c - 'A' + 'a';
+    return c;
+}
+
+static URL_b32 streqcase(URL_String a, URL_String b)
+{
+    if (a.len != b.len)
+        return 0;
+    for (int i = 0; i < a.len; i++)
+        if (to_lower(a.ptr[i]) != to_lower(b.ptr[i]))
+            return 0;
+    return 1;
+}
+
 static URL_b32 is_alpha(char c)
 {
     return (c >= 'a' && c <= 'z')
@@ -342,9 +359,21 @@ int url_parse_ipv6(char *src, int len, int *pcur, URL_IPv6 *out)
     return 0;
 }
 
+static URL_b32 is_special_scheme(URL_String scheme)
+{
+    return streqcase(scheme, S("ftp"))
+        || streqcase(scheme, S("file"))
+        || streqcase(scheme, S("http"))
+        || streqcase(scheme, S("https"))
+        || streqcase(scheme, S("ws"))
+        || streqcase(scheme, S("wss"));
+}
+
 int url_parse(char *src, int len, int *pcur, URL *out, int flags)
 {
     int cur = pcur ? *pcur : 0;
+
+    out->flags = flags;
 
     // Parse scheme characters until the end of the string,
     // a character not allowed in the scheme, or ':'. If the
@@ -385,13 +414,30 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
     // info or the domain until we hit a @ character or
     // a character not allowed in the user info, se we
     // need to backtrack in a similar way to the scheme
+    int authority_off = cur;
     out->no_authority = 1;
     out->no_userinfo = 1;
-    int authority_off = cur;
     if (len - cur > 1 && src[cur] == '/' && src[cur+1] == '/') {
         cur += 2; // Consume the //
         out->no_authority = 0;
+    } else {
+        // The WHATWG standard has a special case for special
+        // schemes (ftp, http, https, ...) where if a scheme
+        // if followed by a single "/", it behaves like "//".
+        //
+        // TODO: This rule does not apply if there is a base
+        //       URL with a proper authority. Unfortunately,
+        //       we don't have access to base URL information
+        //       at this point.
+        if ((flags & URL_FLAG_RFC3986) == 0) {
+            if (is_special_scheme(out->scheme) && !streqcase(out->scheme, S("file")) && cur < len && src[cur] == '/') {
+                cur++;
+                out->no_authority = 0;
+            }
+        }
+    }
 
+    if (!out->no_authority) {
         out->username = EMPTY;
         out->password = EMPTY;
         if (cur < len && (is_userinfo(src[cur]) || src[cur] == ':')) {
@@ -512,7 +558,6 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
                     // TODO: What if the dot is percent-encoded?
                     if (src[cur-1] == '.')
                         cur--;
-
                 } else {
                     out->host_type = URL_HOST_EMPTY;
                 }
@@ -528,7 +573,7 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
             // The WHATWG standard forbids port numbers with the
             // "file" protocol.
             if ((flags & URL_FLAG_RFC3986) == 0) {
-                if (streq(out->scheme, S("file")))
+                if (streqcase(out->scheme, S("file")))
                     return -1;
             }
 
@@ -550,7 +595,7 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
         // part of the path and not the authority if userinfo,
         // host, and port are missing
         if ((flags & URL_FLAG_RFC3986) == 0) {
-            if ((streq(out->scheme, S("http")) || streq(out->scheme, S("https")))
+            if ((streqcase(out->scheme, S("http")) || streqcase(out->scheme, S("https")))
                 && out->username.len == 0
                 && out->password.len == 0
                 && out->host_type == URL_HOST_EMPTY
@@ -600,13 +645,7 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
     // For a subset of protocols, WHATWG sets the default
     // path to "/"
     if ((flags & URL_FLAG_RFC3986) == 0) {
-        if (out->path.len == 0 && (
-            streq(out->scheme, S("ftp")) ||
-            streq(out->scheme, S("file")) ||
-            streq(out->scheme, S("http")) ||
-            streq(out->scheme, S("https")) ||
-            streq(out->scheme, S("ws")) ||
-            streq(out->scheme, S("wss"))))
+        if (out->path.len == 0 && is_special_scheme(out->scheme))
             out->path = S("/");
     }
 
@@ -675,19 +714,22 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
 
 typedef struct {
     int count;
+    URL_b32 first_slash;
+    URL_b32 trailing_slash;
     URL_String stack[PATH_COMPONENT_LIMIT];
 } PathComps;
 
 static int
 resolve_dots_and_append_comps(PathComps *comps, URL_String src)
 {
-    URL_b32 is_absolute = 0;
+    if (src.len == 0)
+        return 0;
+
     if (src.len > 0 && src.ptr[0] == '/') {
-        is_absolute = 1;
+        if (comps->count == 0)
+            comps->first_slash = 1;
         src.ptr++;
         src.len--;
-        if (src.len == 0)
-            return 0;
     }
 
     int i = 0;
@@ -698,24 +740,16 @@ resolve_dots_and_append_comps(PathComps *comps, URL_String src)
             i++;
         int len = i - off;
 
-        if (len == 0)
-            return -1; // Empty component
-
         URL_String comp = { src.ptr + off, len };
-        if (comp.len == 2 && comp.ptr[0] == '.' && comp.ptr[1] == '.') {
-            if (comps->count == 0) {
-                // For absolute paths, ".." at root is ignored (stays at root)
-                // For relative paths, ".." with no components references parent, which is invalid
-                if (!is_absolute)
-                    return -1;
-                // Otherwise, ignore the ".." (absolute path, already at root)
-            } else {
+        if (streq(comp, S(".."))) {
+            if (comps->count > 0)
                 comps->count--;
+        } else {
+            if (!streq(comp, S("."))) {
+                if (comps->count == PATH_COMPONENT_LIMIT)
+                    return -1; // To many components
+                comps->stack[comps->count++] = comp;
             }
-        } else if (comp.len != 1 || comp.ptr[0] != '.') {
-            if (comps->count == PATH_COMPONENT_LIMIT)
-                return -1; // To many components
-            comps->stack[comps->count++] = comp;
         }
 
         if (i == src.len)
@@ -728,6 +762,7 @@ resolve_dots_and_append_comps(PathComps *comps, URL_String src)
             break;
     }
 
+    comps->trailing_slash = (src.len > 0 && src.ptr[src.len-1] == '/');
     return 0;
 }
 
@@ -808,17 +843,35 @@ static void append_fragment(Builder *b, URL_String fragment)
     }
 }
 
-int url_serialize(URL *url, URL *base, char *dst, int cap)
+int url_serialize(URL url, URL *base, char *dst, int cap)
 {
     if (base != NULL && base->scheme.len == 0)
         return -1; // Base is not an absolute URL
 
+    if ((url.flags & URL_FLAG_RFC3986) == 0) {
+        if (base
+            && streqcase(url.scheme, base->scheme)
+            && is_special_scheme(url.scheme)
+            && url.no_authority) {
+            url.scheme = EMPTY;
+        }
+    }
+
     Builder b = { dst, cap, 0 };
-    if (url->scheme.len > 0) {
-        append_scheme(&b, url->scheme);
-        append_authority(&b, *url);
-        append(&b, url->path);
-        append_query(&b, url->query);
+    if (url.scheme.len > 0) {
+        append_scheme(&b, url.scheme);
+        append_authority(&b, url);
+        PathComps comps = {0};
+        if (resolve_dots_and_append_comps(&comps, url.path) < 0)
+                return -1;
+        for (int i = 0; i < comps.count; i++) {
+            if (i > 0 || comps.first_slash)
+                append(&b, S("/"));
+            append(&b, comps.stack[i]);
+        }
+        if (comps.trailing_slash)
+            append(&b, S("/"));
+        append_query(&b, url.query);
     } else {
         if (base == NULL) {
             // No base URL provided, which means the
@@ -827,34 +880,37 @@ int url_serialize(URL *url, URL *base, char *dst, int cap)
         }
         ASSERT(base->scheme.len > 0);
         append_scheme(&b, base->scheme);
-        if (!url->no_authority) {
-            append_authority(&b, *url);
+        if (!url.no_authority) {
+            append_authority(&b, url);
             PathComps comps = {0};
-            if (resolve_dots_and_append_comps(&comps, url->path) < 0)
+            if (resolve_dots_and_append_comps(&comps, url.path) < 0)
                     return -1;
             for (int i = 0; i < comps.count; i++) {
-                append(&b, S("/"));
+                if (i > 0 || comps.first_slash)
+                    append(&b, S("/"));
                 append(&b, comps.stack[i]);
             }
-            append_query(&b, url->query);
+            if (comps.trailing_slash)
+                append(&b, S("/"));
+            append_query(&b, url.query);
         } else {
             append_authority(&b, *base);
-            if (url->path.len == 0) {
+            if (url.path.len == 0) {
                 append(&b, base->path);
-                if (url->query.len > 0) {
-                    append_query(&b, url->query);
+                if (url.query.len > 0) {
+                    append_query(&b, url.query);
                 } else {
                     append_query(&b, base->query);
                 }
             } else {
-                ASSERT(url->path.len > 0);
+                ASSERT(url.path.len > 0);
                 PathComps comps = {0};
-                if (url->path.ptr[0] == '/') {
-                    if (resolve_dots_and_append_comps(&comps, url->path) < 0)
+                if (url.path.ptr[0] == '/') {
+                    if (resolve_dots_and_append_comps(&comps, url.path) < 0)
                         return -1;
                 } else {
                     if (!base->no_authority && base->path.len == 0) {
-                        if (resolve_dots_and_append_comps(&comps, url->path) < 0)
+                        if (resolve_dots_and_append_comps(&comps, url.path) < 0)
                             return -1;
                     } else {
                         if (resolve_dots_and_append_comps(&comps, base->path) < 0)
@@ -862,19 +918,22 @@ int url_serialize(URL *url, URL *base, char *dst, int cap)
                         if (comps.count > 0) {
                             comps.count--;
                         }
-                        if (resolve_dots_and_append_comps(&comps, url->path) < 0)
+                        if (resolve_dots_and_append_comps(&comps, url.path) < 0)
                             return -1;
                     }
                 }
                 for (int i = 0; i < comps.count; i++) {
-                    append(&b, S("/"));
+                    if (i > 0 || comps.first_slash)
+                        append(&b, S("/"));
                     append(&b, comps.stack[i]);
                 }
-                append_query(&b, url->query);
+                if (comps.trailing_slash)
+                    append(&b, S("/"));
+                append_query(&b, url.query);
             }
         }
     }
-    append_fragment(&b, url->fragment);
+    append_fragment(&b, url.fragment);
 
     return b.len;
 }

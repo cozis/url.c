@@ -314,7 +314,22 @@ static int run_test(cJSON *json)
     char buf[1<<10];
     URL parsed;
     if (cJSON_IsNull(json_base)) {
+
+        ret = url_remove_white_space(src.ptr, src.len, tmp, (int) sizeof(tmp));
+        if (ret > (int) sizeof(tmp)) {
+            assert(0); // TODO
+        }
+        src.ptr = tmp;
+        src.len = ret;
+
         ret = url_parse(src.ptr, src.len, NULL, &parsed, 0);
+
+        if (ret > -1)
+            ret = url_serialize(parsed, NULL, buf, (int) sizeof(buf));
+
+        if (ret > -1)
+            ret = url_parse(buf, ret, NULL, &parsed, 0);
+
     } else {
         if (!cJSON_IsString(json_base)) {
             test_printf("  JSON object field \"base\" is not a string or null:\n");
@@ -347,7 +362,7 @@ static int run_test(cJSON *json)
         ret = url_parse(src.ptr, src.len, NULL, &reference, URL_FLAG_ALLOWREF);
 
         if (ret > -1)
-            ret = url_serialize(&reference, &parsed_base, buf, (int) sizeof(buf));
+            ret = url_serialize(reference, &parsed_base, buf, (int) sizeof(buf));
 
         if (ret > -1)
             ret = url_parse(buf, ret, NULL, &parsed, 0);
