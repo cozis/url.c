@@ -492,6 +492,7 @@ int main(void)
 
     if (!cJSON_IsArray(root)) {
         fprintf(stderr, "Error: %s doesn't contain a JSON array as expected", path);
+        cJSON_Delete(root);
         free(buf);
         return -1;
     }
@@ -544,6 +545,7 @@ int main(void)
     printf("  failed : %d\n", num_failed);
     printf("  aborted: %d\n", num_aborted);
 
+    cJSON_Delete(root);
     free(buf);
     return 0;
 }
