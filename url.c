@@ -580,25 +580,26 @@ int url_parse(char *src, int len, int *pcur, URL *out, int flags)
         out->no_port = 1;
         out->port    = 0;
         if (cur < len && src[cur] == ':') {
-
-            // The WHATWG standard forbids port numbers with the
-            // "file" protocol.
-            if ((flags & URL_FLAG_RFC3986) == 0) {
-                if (streqcase(out->scheme, S("file")))
-                    return -1;
-            }
-
             cur++; // Consume the ':'
-            out->no_port = 0;
 
-            while (cur < len && is_digit(src[cur])) {
+            if (cur < len && is_digit(src[cur])) {
 
-                int n = src[cur] - '0';
-                cur++;
+                // The WHATWG standard forbids port numbers with the
+                // "file" protocol.
+                if ((flags & URL_FLAG_RFC3986) == 0) {
+                    if (streqcase(out->scheme, S("file")))
+                        return -1;
+                }
 
-                if (out->port > (UINT16_MAX - n) / 10)
-                    return -1; // Overflow
-                out->port = out->port * 10 + n;
+                out->no_port = 0;
+                do {
+                    int n = src[cur] - '0';
+                    cur++;
+
+                    if (out->port > (UINT16_MAX - n) / 10)
+                        return -1; // Overflow
+                    out->port = out->port * 10 + n;
+                } while (cur < len && is_digit(src[cur]));
             }
         }
 

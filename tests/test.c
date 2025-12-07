@@ -202,15 +202,21 @@ static int json_to_url(cJSON *json, URL *url)
         url->fragment.len--;
     }
 
-    char tmp[8];
-    if (port.len >= (int) sizeof(tmp)) {
-        test_printf(" JSON object's port field is longer than expected\n");
-        return -1;
-    }
-    memcpy(tmp, port.ptr, port.len);
-    tmp[port.len] = 0;
+    if (port.len == 0) {
+        url->no_port = 1;
+        url->port = 0;
+    } else {
+        char tmp[8];
+        if (port.len >= (int) sizeof(tmp)) {
+            test_printf(" JSON object's port field is longer than expected\n");
+            return -1;
+        }
+        memcpy(tmp, port.ptr, port.len);
+        tmp[port.len] = 0;
 
-    url->port = atoi(tmp);
+        url->no_port = 0;
+        url->port = atoi(tmp);
+    }
     return 0;
 }
 
@@ -266,6 +272,20 @@ static int compare_urls(URL parsed, URL expected)
         test_printf("  host mismatch\n");
         test_printf("    parsed   [%.*s]\n", ret, tmp);
         test_printf("    expected [%.*s]\n", UNPACK(expected.host_text));
+        ok = false;
+    }
+
+    if (parsed.no_port != expected.no_port) {
+        if (ok) test_printf("\n");
+        if (parsed.no_port) {
+            test_printf("  port mismatch\n");
+            test_printf("    parsed   (empty)\n");
+            test_printf("    expected [%d]\n", expected.port);
+        } else {
+            test_printf("  port mismatch\n");
+            test_printf("    parsed   [%d]\n", parsed.port);
+            test_printf("    expected (empty)\n");
+        }
         ok = false;
     }
 
