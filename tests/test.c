@@ -31,6 +31,10 @@ void test_printf(char *fmt, ...)
         sizeof(test_output_buffer) - test_output_buffer_used,
         fmt, args);
     va_end(args);
+
+    assert(len > -1);
+    if (len > (int) sizeof(test_output_buffer) - test_output_buffer_used)
+        len = sizeof(test_output_buffer) - test_output_buffer_used;
     test_output_buffer_used += len;
 }
 
