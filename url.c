@@ -857,6 +857,8 @@ static void append_fragment(Builder *b, URL_String fragment)
 
 int url_serialize(URL url, URL *base, char *dst, int cap)
 {
+    ASSERT(cap == 0 || dst != NULL);
+
     if (base != NULL && base->scheme.len == 0)
         return -1; // Base is not an absolute URL
 
@@ -960,6 +962,8 @@ static URL_b32 is_white_space(char c)
 
 int url_remove_white_space(char *src, int len, char *dst, int cap)
 {
+    ASSERT(cap == 0 || dst != NULL);
+
     while (len > 0 && is_white_space(src[0])) {
         src++;
         len--;
@@ -982,6 +986,8 @@ int url_remove_white_space(char *src, int len, char *dst, int cap)
 
 int url_percent_decode(URL_String str, char *dst, int cap)
 {
+    ASSERT(cap == 0 || dst != NULL);
+
     char *src = str.ptr;
     int   len = str.len;
     int   rd  = 0;
